@@ -23,6 +23,7 @@ async def notify_all(message):
         if username in connected_users:
             print(f"⚡ Removing dead connection: {username}")
 
+#this needs to be removed
 async def register_user(ws, username, ip):
     """Register a new user"""
     if username in connected_users:
@@ -72,10 +73,10 @@ async def ping_users():
 async def handler(ws):
     """Handle WebSocket connections"""
     username = None
-    # client_ip = ws.remote_address[0] if ws.remote_address else "unknown" # This is not needed because I see local IP instead of actual user IP
+    client_ip = ws.remote_address[0] if ws.remote_address else "unknown" # This is not needed because I see local IP instead of actual user IP
     
     try:
-        # print(f"🔗 New connection from {client_ip}")
+        print(f"🔗 New connection from {client_ip}")
         
         async for message in ws:
             try:
@@ -83,7 +84,7 @@ async def handler(ws):
                 
                 if data["type"] == "register":
                     username = data["username"]
-                    # ip = data.get("ip", client_ip)
+                    ip = data.get("ip", client_ip)
                     success = await register_user(ws, username, ip)
                     if not success:
                         break
@@ -108,7 +109,8 @@ async def handler(ws):
                         connected_users[username]["last_pong"] = time.time()
                         
             except json.JSONDecodeError:
-                # print(f"❓ Invalid JSON from {username or client_ip}")
+                print(f"❓ Invalid JSON from {username or client_ip}")
+
                 
     except websockets.exceptions.ConnectionClosed:
         print(f"📱 Connection closed: {username}")
