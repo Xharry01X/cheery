@@ -22,7 +22,6 @@ async def notify_all(message):
     for username in dead_users:
         if username in connected_users:
             print(f"⚡ Removing dead connection: {username}")
-            await unregister_user(username)
 
 async def register_user(ws, username, ip):
     """Register a new user"""
@@ -45,18 +44,6 @@ async def register_user(ws, username, ip):
     })
     
     return True
-
-async def unregister_user(username):
-    """Remove user from connected users"""
-    if username in connected_users:
-        del connected_users[username]
-        print(f"❌ {username} disconnected")
-        print(f"👥 Remaining users: {list(connected_users.keys())}")
-        
-        await notify_all({
-            "type": "user_list", 
-            "users": list(connected_users.keys())
-        })
 
 async def ping_users():
     """Check connection health every 30 seconds"""
@@ -81,7 +68,6 @@ async def ping_users():
         for username in dead_users:
             if username in connected_users:
                 print(f"⏰ {username} timed out")
-                await unregister_user(username)
 
 async def handler(ws):
     """Handle WebSocket connections"""
@@ -128,9 +114,6 @@ async def handler(ws):
         print(f"📱 Connection closed: {username or client_ip}")
     except Exception as e:
         print(f"💥 Error: {e}")
-    finally:
-        if username:
-            await unregister_user(username)
 
 async def main():
     """Start the server"""
