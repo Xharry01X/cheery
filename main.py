@@ -1,134 +1,108 @@
 import asyncio
 import websockets
-import json
+import uvloop
 import time
+import json
+import logging
+
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
 
 connected_users = {}
-
-async def notify_all(message):
-    """Send message to all connected users"""
-    if not connected_users:
-        return
-        
-    data = json.dumps(message)
-    dead_users = []
-    
-    for username, user in connected_users.items():
-        try:
-            await user["ws"].send(data)
-        except:
-            dead_users.append(username)
-    
-    for username in dead_users:
-        if username in connected_users:
-            print(f"⚡ Removing dead connection: {username}")
-
-#this needs to be removed
-async def register_user(ws, username, ip):
-    """Register a new user"""
-    if username in connected_users:
-        await ws.send(json.dumps({"type": "error", "message": "Username taken"}))
-        return False
-        
-    connected_users[username] = {
-        "ip": ip, 
-        "ws": ws, 
-        "last_pong": time.time()
-    }
-    
-    print(f"✅ {username} connected from {ip}")
-    print(f"👥 Online users: {list(connected_users.keys())}")
-    
-    await notify_all({
-        "type": "user_list", 
-        "users": list(connected_users.keys())
-    })
-    
-    return True
-
-async def ping_users():
-    """Check connection health every 30 seconds"""
-    while True:
-        await asyncio.sleep(30)
-        
-        if not connected_users:
-            continue
-            
-        current_time = time.time()
-        dead_users = []
-        
-        for username, user in connected_users.items():
-            if current_time - user["last_pong"] > 60:
-                dead_users.append(username)
-            else:
-                try:
-                    await user["ws"].send(json.dumps({"type": "ping"}))
-                except:
-                    dead_users.append(username)
-        
-        for username in dead_users:
-            if username in connected_users:
-                print(f"⏰ {username} timed out")
+user_index = {}
 
 async def handler(ws):
-    """Handle WebSocket connections"""
+    logging.info("New connection: %s", ws.remote_address)
     username = None
-    client_ip = ws.remote_address[0] if ws.remote_address else "unknown" # This is not needed because I see local IP instead of actual user IP
-    
+
     try:
-        print(f"🔗 New connection from {client_ip}")
-        
         async for message in ws:
+            logging.info("Raw message from %s: %s", ws.remote_address, message)
+
             try:
                 data = json.loads(message)
-                
-                if data["type"] == "register":
-                    username = data["username"]
-                    ip = data.get("ip", client_ip)
-                    success = await register_user(ws, username, ip)
-                    if not success:
-                        break
+            except Exception as e:
+                logging.error("Invalid JSON from %s: %s", ws.remote_address, e)
+                continue
 
-                elif data["type"] == "get_ip":
-                    target = data["target"]
-                    if target in connected_users:
-                        await ws.send(json.dumps({
-                            "type": "ip_response",
-                            "target": target,
-                            "ip": connected_users[target]["ip"]
-                        }))
-                    else:
-                        await ws.send(json.dumps({
-                            "type": "ip_response", 
-                            "target": target,
-                            "error": "User not online"
-                        }))
-                
-                elif data["type"] == "pong":
-                    if username and username in connected_users:
-                        connected_users[username]["last_pong"] = time.time()
-                        
-            except json.JSONDecodeError:
-                print(f"❓ Invalid JSON from {username or client_ip}")
+            logging.info("Parsed JSON: %s", data)
 
-                
-    except websockets.exceptions.ConnectionClosed:
-        print(f"📱 Connection closed: {username}")
+            op = data.get("t")
+
+            if op == "r":
+                username = data["u"]
+                connected_users[ws] = {
+                    "username": username,
+                    "d": data["data"],
+                    "ip": time.time(),
+                }
+                user_index[username] = ws
+                logging.info("Registered user '%s'", username)
+
+            elif op == "g":
+                target_user = data["u"]
+                logging.info("'%s' requested data of '%s'", username, target_user)
+
+                target_ws = user_index.get(target_user)
+                if target_ws and target_ws in connected_users:
+                    payload = {
+                        "t": "i",
+                        "d": connected_users[target_ws]["d"],
+                    }
+                    logging.info("Sending data to '%s': %s", username, payload)
+                    await ws.send(json.dumps(payload))
+                else:
+                    logging.info("Target user '%s' not found or offline", target_user)
+
+            elif op == "p":
+                if ws in connected_users:
+                    connected_users[ws]["ip"] = time.time()
+                    logging.info("Ping received from '%s'", connected_users[ws]["username"])
+
     except Exception as e:
-        print(f"💥 Error: {e}")
+        logging.error("Exception in handler (%s): %s", ws.remote_address, e)
+
+    finally:
+        logging.info("Client disconnected: %s", ws.remote_address)
+
+        if ws in connected_users:
+            logging.info("Removing user '%s'", connected_users[ws]["username"])
+            del connected_users[ws]
+
+        if username and username in user_index:
+            del user_index[username]
+
+
+async def janitor():
+    while True:
+        await asyncio.sleep(30)
+        if not connected_users:
+            continue
+
+        now = time.time()
+
+        dead = [ws for ws, meta in connected_users.items() if now - meta["ip"] > 60]
+
+        for ws in dead:
+            logging.warning("Janitor closing inactive user '%s'",
+                            connected_users[ws]["username"])
+            await ws.close()
+
 
 async def main():
-    """Start the server"""
-    asyncio.create_task(ping_users())
-    
-    server = await websockets.serve(handler, "0.0.0.0", 8765)
-    
-    print("🚀 Central Server Started")
-    print("📍 ws://0.0.0.0:8765")
-    print("⏰ Auto-ping every 30s, timeout 60s")
-    print("Waiting for connections...\n")
-    
-    await server.wait_closed()
+    asyncio.create_task(janitor())
+
+    async with websockets.serve(handler, "0.0.0.0", 8765):
+        logging.info("WebSocket Server Running on :8765")
+        await asyncio.Future()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Server stopped by user")
