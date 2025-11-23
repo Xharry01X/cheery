@@ -3,7 +3,7 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -Wall -Wextra -g
-TARGET = cheery
+TARGET = main
 SRC_DIR = src
 BUILD_DIR = build
 SRC = $(wildcard $(SRC_DIR)/*.c)
@@ -22,6 +22,9 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 
 run: all
 	@./$(BUILD_DIR)/$(TARGET)
+
+install: all
+	@cp $(BUILD_DIR)/$(TARGET) /usr/local/bin/$(TARGET)
 
 clean:
 	rm -rf $(BUILD_DIR)/*

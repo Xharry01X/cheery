@@ -1,21 +1,16 @@
-# Cheery - WebSocket Relay Server
+# Cheery - Minimal Relay Server
 
-A minimal, central WebSocket relay server designed to facilitate peer-to-peer connections between clients. This server acts as a signaling server to help clients discover each other and establish direct connections.
+A high-performance relay server designed to facilitate peer-to-peer connections between clients using a simple binary protocol.
 
 ## Features
 
-- 📡 Real-time user presence tracking
-- 🔄 Automatic user list updates for all connected clients
-- 🌐 IP address exchange for peer-to-peer connections
-- 🚀 Built with Python's asyncio and websockets for high performance
-- 🔒 Simple and lightweight implementation
+- 🚀 Ultra-fast C implementation using epoll
+- 🔄 Simple binary protocol
+- ⏱️ Automatic connection timeouts
+- 🔒 No external dependencies
+- 💻 Cross-platform (Linux/Unix)
 
-## Prerequisites
-
-- Python 3.9 or higher
-- Poetry (for dependency management)
-
-## Installation
+## Build & Run
 
 1. Clone the repository:
    ```bash
@@ -23,29 +18,45 @@ A minimal, central WebSocket relay server designed to facilitate peer-to-peer co
    cd cheery
    ```
 
-2. Install dependencies using Poetry:
+2. Build the server:
    ```bash
-   poetry install
+   make
    ```
 
-## Usage
-
-1. Start the server:
+3. Run the server:
    ```bash
-   poetry run python main.py
+   ./build/main
    ```
 
-2. The server will start on `ws://0.0.0.0:8765`
+The server will listen on `0.0.0.0:8765` by default.
 
-## API Reference
+## Binary Protocol
 
-### Register a User
-```json
-{
-    "type": "register",
-    "username": "your_username",
-    "ip": "your_ip_address"
-}
+### Packet Structure
+All packets start with a 1-byte command followed by optional payload.
+
+### Commands
+
+#### 0x01 - Create Room
+Create a new room with a 4-byte room code.
+```
+[0x01][code:4]
+```
+
+#### 0x02 - Join Room
+Join an existing room with a 4-byte room code.
+```
+[0x02][code:4]
+```
+
+Responses:
+- `0x04` - Matched with peer
+- `0x05` - Waiting for peer
+
+#### 0x03 - Relay Data
+Send data to the paired peer.
+```
+[0x03][data...]
 ```
 
 ### Get User IP
