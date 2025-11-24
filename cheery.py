@@ -1,174 +1,111 @@
 import asyncio
 import struct
-import logging
-from dataclasses import dataclass
-from typing import Optional, Dict
+import random
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s: %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Commands
+CREATE = 0x01
+JOIN   = 0x02
+OFFER  = 0x03
+ANSWER = 0x04
+ICE    = 0x05
 
-PORT = 8765
-TIMEOUT = 60  
+# Responses
+ROOM_CREATED = 0x10
+JOIN_OK      = 0x11
+OFFER_FWD    = 0x20
+ANSWER_FWD   = 0x21
+ICE_FWD      = 0x22
+ERROR        = 0x7F
 
-CMD_CREATE = 0x01
-CMD_JOIN   = 0x02
-RESP_ACK   = 0x01
-RESP_MATCH = 0x04
-RESP_ERR   = 0x05  
+rooms = {}  # code -> (creator, joiner)
 
+async def send_frame(writer, cmd, payload=b""):
+    writer.write(bytes([cmd]) + struct.pack("<I", len(payload)) + payload)
+    await writer.drain()
 
-@dataclass
-class Client:
-    reader: asyncio.StreamReader
-    writer: asyncio.StreamWriter
-    ip: str
-    port: int
-    timeout_handle: Optional[asyncio.TimerHandle] = None
+async def send_error(writer):
+    writer.write(bytes([ERROR, 1]))
+    await writer.drain()
 
+async def handle_client(reader, writer):
+    peer = writer.get_extra_info("peername")
+    client = (reader, writer)
+    room_code = None
+    is_creator = False
 
-class SignalingServer:
-    def __init__(self, host: str = "0.0.0.0", port: int = PORT):
-        self.host = host
-        self.port = port
-        # Only state: code -> creator client
-        self.rooms: Dict[int, Client] = {}
-        self.loop = asyncio.get_event_loop()
+    try:
+        while True:
+            cmd_byte = await reader.read(1)
+            if not cmd_byte:
+                break
+            cmd = cmd_byte[0]
 
-    async def send_bytes(self, client: Client, data: bytes) -> bool:
-        try:
-            client.writer.write(data)
-            await client.writer.drain()
-            return True
-        except Exception:
-            return False
+            # CREATE ROOM
+            if cmd == CREATE:
+                room_code = random.randint(100000, 999999)
+                rooms[room_code] = {"creator": client, "joiner": None}
+                is_creator = True
+                writer.write(bytes([ROOM_CREATED]) + struct.pack("<I", room_code))
+                await writer.drain()
 
-    async def close_client(self, client: Client) -> None:
-        try:
-            client.writer.close()
-            await client.writer.wait_closed()
-        except Exception:
-            pass
-
-    def schedule_timeout(self, code: int, client: Client) -> None:
-        # Cancel old timeout if any
-        if client.timeout_handle and not client.timeout_handle.cancelled():
-            client.timeout_handle.cancel()
-
-        def on_timeout():
-            # Runs in event loop thread
-            if self.rooms.get(code) is client:
-                logger.info(f"Room timeout code={code} from {client.ip}:{client.port}")
-                self.rooms.pop(code, None)
-                asyncio.create_task(self.close_client(client))
-
-        client.timeout_handle = self.loop.call_later(TIMEOUT, on_timeout)
-
-    async def handle_create(self, client: Client, code: int) -> None:
-        # If code already in use, reject
-        if code in self.rooms:
-            await self.send_bytes(client, bytes([RESP_ERR]))
-            return
-
-        self.rooms[code] = client
-        self.schedule_timeout(code, client)
-        ok = await self.send_bytes(client, bytes([RESP_ACK]))
-        if not ok:
-            # Creator vanished immediately; clean state
-            self.rooms.pop(code, None)
-            return
-
-        logger.info(f"Room created code={code} by {client.ip}:{client.port}")
-
-    async def handle_join(self, joiner: Client, code: int) -> None:
-        creator = self.rooms.pop(code, None)
-        if not creator:
-            # No such room
-            await self.send_bytes(joiner, bytes([RESP_ERR]))
-            return
-
-        # Cancel creator timeout
-        if creator.timeout_handle and not creator.timeout_handle.cancelled():
-            creator.timeout_handle.cancel()
-            creator.timeout_handle = None
-
-        # Build "MATCH" responses: [RESP_MATCH][ip]\x00[port_le]
-        def build_match(ip: str, port: int) -> bytes:
-            b = bytearray()
-            b.append(RESP_MATCH)
-            ip_bytes = ip.encode("utf-8")[:255]
-            b.extend(ip_bytes)
-            b.append(0x00)
-            b.extend(struct.pack("<H", port))
-            return bytes(b)
-
-        to_joiner = build_match(creator.ip, creator.port)
-        to_creator = build_match(joiner.ip, joiner.port)
-
-        ok_creator = await self.send_bytes(creator, to_creator)
-        ok_joiner = await self.send_bytes(joiner, to_joiner)
-
-        logger.info(
-            f"Matched code={code}: "
-            f"{creator.ip}:{creator.port} <-> {joiner.ip}:{joiner.port}"
-        )
-        await self.close_client(creator)
-        await self.close_client(joiner)
-
-    async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        peer = writer.get_extra_info("peername")
-        if not peer or len(peer) < 2:
-            ip, port = "0.0.0.0", 0
-        else:
-            ip, port = peer[0], peer[1]
-
-        client = Client(reader=reader, writer=writer, ip=ip, port=port)
-        logger.debug(f"Client connected {ip}:{port}")
-
-        try:
-            while True:
-                try:
-                    cmd_bytes = await asyncio.wait_for(reader.readexactly(1), timeout=TIMEOUT)
-                except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-                    break
-
-                if not cmd_bytes:
-                    break
-
-                cmd = cmd_bytes[0]
-                try:
-                    code_bytes = await asyncio.wait_for(reader.readexactly(4), timeout=5)
-                except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-                    break
-
+            # JOIN ROOM
+            elif cmd == JOIN:
+                code_bytes = await reader.readexactly(4)
                 code = struct.unpack("<I", code_bytes)[0]
 
-                if cmd == CMD_CREATE:
-                    await self.handle_create(client, code)
-                elif cmd == CMD_JOIN:
-                    await self.handle_join(client, code)
-                    return
+                if code not in rooms or rooms[code]["joiner"]:
+                    await send_error(writer)
+                    continue
+
+                rooms[code]["joiner"] = client
+                room_code = code
+                writer.write(bytes([JOIN_OK]))
+                await writer.drain()
+
+            # OFFER / ANSWER / ICE
+            elif cmd in (OFFER, ANSWER, ICE):
+                len_bytes = await reader.readexactly(4)
+                size = struct.unpack("<I", len_bytes)[0]
+                payload = await reader.readexactly(size)
+
+                if room_code not in rooms:
+                    await send_error(writer)
+                    continue
+
+                room = rooms[room_code]
+                creator = room["creator"]
+                joiner = room["joiner"]
+
+                # Forward to the other peer
+                target = joiner if is_creator else creator
+                if not target:
+                    continue
+
+                _, w = target
+
+                if cmd == OFFER:
+                    await send_frame(w, OFFER_FWD, payload)
+                elif cmd == ANSWER:
+                    await send_frame(w, ANSWER_FWD, payload)
                 else:
-                    await self.send_bytes(client, bytes([RESP_ERR]))
-                    break
+                    await send_frame(w, ICE_FWD, payload)
 
-        finally:
-            await self.close_client(client)
-            logger.debug(f"Client disconnected {ip}:{port}")
+            # Unknown
+            else:
+                await send_error(writer)
 
-    async def run(self) -> None:
-        server = await asyncio.start_server(self.handle_client, self.host, self.port)
-        logger.info(f"Signaling server listening on {self.host}:{self.port}")
-        async with server:
-            await server.serve_forever()
-
+    except:
+        pass
+    finally:
+        # cleanup
+        if room_code in rooms:
+            rooms.pop(room_code, None)
+        writer.close()
+        await writer.wait_closed()
 
 async def main():
-    srv = SignalingServer()
-    await srv.run()
+    server = await asyncio.start_server(handle_client, "0.0.0.0", 8765)
+    async with server:
+        await server.serve_forever()
 
-
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
