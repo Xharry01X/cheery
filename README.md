@@ -1,7 +1,5 @@
 <div align="center">
 
-<!-- Replace with your own banner — recommended: 1280×640px, dark background -->
-<img src="https://placehold.co/1280x400/0d1117/ffffff?text=cheery" alt="Cheery banner" width="100%" />
 
 <br/>
 <br/>
