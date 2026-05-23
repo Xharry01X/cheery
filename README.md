@@ -1,9 +1,5 @@
 <div align="center">
 
-
-<br/>
-<br/>
-
 <h1>🍒 cheery</h1>
 
 <p><strong>Minimal, blazing-fast WebRTC signaling server.<br/>Zero dependencies beyond Python. No Redis. No cloud bill.</strong></p>
