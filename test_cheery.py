@@ -76,7 +76,7 @@ class MockReader:
 
 async def wait_for_condition(writer, condition, timeout=3.0, interval=0.01):
     """Poll writer.data until condition(writer.data) is True."""
-    loop = asyncio.get_running_loop()          # ← replaces deprecated get_event_loop()
+    loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while not condition(writer.data):
         if loop.time() > deadline:
@@ -86,7 +86,7 @@ async def wait_for_condition(writer, condition, timeout=3.0, interval=0.01):
 
 async def wait_for_room_cleanup(room_code, timeout=5.0):
     """Wait for a room to be cleaned up."""
-    loop = asyncio.get_running_loop()          # ← replaces deprecated get_event_loop()
+    loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while room_code in rooms:
         if loop.time() > deadline:
@@ -587,6 +587,35 @@ async def test_long_lived_connection_messages():
     return success
 
 
+async def test_unknown_command_handling():
+    """Test that unknown commands are handled gracefully without warnings."""
+    print("\n🧪 Test 13: Unknown command handling (no warnings)")
+    rooms.clear()
+
+    reader = MockReader()
+    writer = MockWriter()
+
+    # Send an unknown command (e.g., 0x47 = 'G' for GET request)
+    reader.feed_data(bytes([0x47]))
+
+    task = asyncio.create_task(handle_client(reader, writer))
+
+    # Wait for the error response
+    await wait_for_condition(writer, lambda d: len(d) > 0)
+
+    # Check that we got an error response
+    if writer.data[0] == ERROR:
+        print("✅ PASSED: Unknown command handled with error response")
+        result = True
+    else:
+        print("❌ FAILED: Expected error response for unknown command")
+        result = False
+
+    reader.feed_eof()
+    await task
+    return result
+
+
 async def run_all_tests():
     """Run all tests sequentially."""
     print("=" * 60)
@@ -612,6 +641,9 @@ async def run_all_tests():
         ("Connection Lifecycle", [
             test_full_signaling_flow,
             test_long_lived_connection_messages,
+        ]),
+        ("Error Handling", [
+            test_unknown_command_handling,
         ]),
     ]
 
