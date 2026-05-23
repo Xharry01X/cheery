@@ -3,3 +3,6 @@ cheery.service
 __pycache__/
 
 .venv/
+
+
+__pycache__
