@@ -19,8 +19,7 @@
 
 <br/>
 
-<!-- Replace with a real screenshot or architecture diagram -->
-<img src="https://placehold.co/860x420/161b22/58a6ff?text=your+screenshot+here" alt="Cheery in action" width="86%" style="border-radius:12px;" />
+<img src="./img/cheery.png" />
 
 <br/>
 <br/>
@@ -166,7 +165,6 @@ python test_cheery.py
 ```
 cheery/
 ├── cheery.py            # Server (the whole thing)
-├── cheery.nginx.conf    # nginx: TLS termination + WebSocket proxy
 ├── cheery.service       # systemd: auto-restart + process hardening
 ├── test_cheery.py       # 12 tests, runs on uvloop
 └── README.md
